@@ -16,7 +16,15 @@ import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 
-// hello?
+/**
+ * Runs a basic line-counting job. For each line of input, this processes
+ * it by counting the number of input lines and outputting them along
+ * with their labels. This makes it possible for the next job to 
+ * determine the number of data points, and also where each data point
+ * falls in the set.
+ * 
+ * @author Shannon Quinn
+ */
 public class RowNumberJob {
 
     public final static byte COUNTER_MARKER = (byte) 'T';
@@ -35,7 +43,12 @@ public class RowNumberJob {
                 fs.delete(output, true);
             }
             Job job = Job.getInstance(conf);
-            //job.setGroupingComparatorClass(IndifferentComparator.class);
+            
+            // Necessary to group both counts and values together in
+            // the same Reducer.
+            job.setGroupingComparatorClass(IndifferentComparator.class);
+            
+            // Necessary to correctly partition data to Reducers.
             job.setPartitionerClass(RowNumberWritable.Partitioner.class);
 
             job.setMapperClass(RowNumberMapper.class);
