@@ -107,6 +107,7 @@ public class PairwiseJob {
         	int I = (int)(id / edgelength);
         	int J;
         	// Loop down towards the diagonal.
+        	outVal.setType(new Text(DataPointWritable.COL));
         	for (J = 0; J < (this.h / 2) + 1; ++J) {
         		int p = (((I + 1) * I) / 2) + J;
         		outKey.set(p);
@@ -114,7 +115,8 @@ public class PairwiseJob {
         	}
         	
         	// Now loop out towards the edge.
-        	for (I += 1; I < this.h; ++I) {
+        	outVal.setType(new Text(DataPointWritable.ROW));
+        	for (; I < this.h; ++I) {
         		int p = (((I + 1) * I) / 2) + J;
         		outKey.set(p);
         		context.write(outKey, outVal);
@@ -128,19 +130,25 @@ public class PairwiseJob {
 
 		protected void reduce(IntWritable key, Iterable<DataPointWritable> values, Context context) throws IOException, InterruptedException {
 			// This should contain all the points in block "key".
-			ArrayList<DataPointWritable> list = new ArrayList<DataPointWritable>();
+			ArrayList<DataPointWritable> rows = new ArrayList<DataPointWritable>();
+			ArrayList<DataPointWritable> cols = new ArrayList<DataPointWritable>();
 			for (DataPointWritable e : values) {
+				String type = e.getType().toString();
 				DataPointWritable toAdd = new DataPointWritable();
 				toAdd.setid(e.getid());
 				toAdd.setValue(e.getValue());
-				list.add(toAdd);
+				if (type.equals(DataPointWritable.ROW)) {
+					rows.add(toAdd);
+				} else {
+					cols.add(toAdd);
+				}
 			}
 			
 			// Now do a double loop.
-			for (int i = 0; i < list.size(); ++i) {
-				DataPointWritable k = list.get(i);
-				for (int j = 0; j < list.size(); ++j) {
-					DataPointWritable d = list.get(j);
+			for (int i = 0; i < rows.size(); ++i) {
+				DataPointWritable k = rows.get(i);
+				for (int j = 0; j < cols.size(); ++j) {
+					DataPointWritable d = cols.get(j);
 					// Check if we're not along the diagonal.
 					if (k.getid() < d.getid()) { 
 						double distance = evaluate(k, d);
