@@ -12,6 +12,27 @@ The initial job can likely also be factored out in a framework like Mahout. Repl
 
 By whatever other means these objectives can be accomplished, then the initial job can be scrapped entirely.
 
+How to use
+----------
+
+ 1. Provide a text file (or directory of text files) where each line is an n-dimensional point, each separated by a comma. For example:
+
+    -1.67454329673,-1.65982727489
+    -1.62661761615,-1.68596505587
+    -1.42286584711,-1.66193468748
+    -1.58282334852,-1.82754404428
+    -1.50182036382,-1.62347000619
+    -1.52781414121,-1.67665119321
+    ...
+
+ 2. Run `RowNumberJob` on this data.
+
+ 3. Look in `PairwiseJob$BlockReducer.evaluate()` and modify this to whatever you want your pairwise operation to be (currently an RBF kernel).
+
+ 4. Run `PairwiseJob` on the output of #2, providing a blocking factor (`h`) and the number of data points (`v`).
+
+ 5. That's it, you're done!
+
 
 Dependencies
 ------------
