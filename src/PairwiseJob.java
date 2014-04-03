@@ -1,8 +1,10 @@
 import java.io.IOException;
+import java.util.ArrayList;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
@@ -22,12 +24,12 @@ import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
  * @author Shannon Quinn
  */
 public class PairwiseJob {
-	
+
 	public static final String BLOCKING_FACTOR = "squinn.blocking.factor";
 	public static final String DATASET_SIZE = "squinn.dataset.size";
 
 	public static void main(String[] args) {
-        if (args.length != 2) {
+        if (args.length != 4) {
             System.out.println("[input] [v] [h] [output]");
             System.exit(-1);
         }
@@ -47,7 +49,7 @@ public class PairwiseJob {
             
 
             job.setMapperClass(BlockMapper.class);
-            job.setMapOutputKeyClass(LongWritable.class);
+            job.setMapOutputKeyClass(IntWritable.class);
             job.setMapOutputValueClass(DataPointWritable.class);
 
             job.setReducerClass(BlockReducer.class);
@@ -74,25 +76,25 @@ public class PairwiseJob {
 
 	}
 	
-	static class BlockMapper extends Mapper<LongWritable, Text, LongWritable, DataPointWritable> {
+	static class BlockMapper extends Mapper<LongWritable, Text, IntWritable, DataPointWritable> {
 		private long v;
 		private int h;
-		private LongWritable outKey;
+		private IntWritable outKey;
 		private DataPointWritable outVal;
 		
         protected void setup(Context context) throws IOException, InterruptedException {
         	v = context.getConfiguration().getLong(PairwiseJob.DATASET_SIZE, Long.MAX_VALUE);
         	h = context.getConfiguration().getInt(PairwiseJob.BLOCKING_FACTOR, 100);
-        	outKey = new LongWritable();
+        	outKey = new IntWritable();
         	outVal = new DataPointWritable();
         }
 
         protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
         	// Break the value up into ID + data point.
-        	String [] elements = value.toString().split("\t");
+        	String [] elements = value.toString().split("\\s+");
         	long id = Long.parseLong(elements[0]);
         	outVal.setValue(new Text(elements[1]));
-        	outVal.seti(id);
+        	outVal.setid(id);
 			
 			// Imagine setting up a v-by-v pairwise matrix, and splitting it
 			// according to the blocking factor h. In order to determine which
@@ -101,39 +103,50 @@ public class PairwiseJob {
 			// hit the diagonal. Then we'll stay at that row and move out along
 			// the columns. The whole way, we'll emit any new subsets we enter.
 			
-			long row = 0;
-			int edgelength = (int)Math.ceil((double)this.v / (double)this.h);
-			outVal.setI((int)(id / edgelength));
-			for (; row < id; row += edgelength) {
-				outKey.set((id * (id - 1) / 2) + row);
-				outVal.setj(row);
-				outVal.setJ((int)(row / edgelength));
-				context.write(outKey, outVal);
-			}
-			for (long col = id + 1; col < this.v; col += edgelength) {
-				outKey.set((col * (col - 1) / 2) + row);
-				outVal.seti(col);
-				outVal.setI((int)(col / edgelength));
-				context.write(outKey, outVal);
-			}
+        	int edgelength = (int)Math.ceil((double)this.v / (double)this.h);
+        	int I = (int)(id / edgelength);
+        	int J;
+        	// Loop down towards the diagonal.
+        	for (J = 0; J < (this.h / 2) + 1; ++J) {
+        		int p = (((I + 1) * I) / 2) + J;
+        		outKey.set(p);
+        		context.write(outKey, outVal);
+        	}
+        	
+        	// Now loop out towards the edge.
+        	for (I += 1; I < this.h; ++I) {
+        		int p = (((I + 1) * I) / 2) + J;
+        		outKey.set(p);
+        		context.write(outKey, outVal);
+        	}
         }
 	}
 	
-	static class BlockReducer extends Reducer<LongWritable, DataPointWritable, Text, Text> {
+	static class BlockReducer extends Reducer<IntWritable, DataPointWritable, Text, Text> {
 		
 		public static final double SIGMA = 1.0;
 
-		protected void reduce(LongWritable key, Iterable<DataPointWritable> values, Context context) throws IOException, InterruptedException {
+		protected void reduce(IntWritable key, Iterable<DataPointWritable> values, Context context) throws IOException, InterruptedException {
 			// This should contain all the points in block "key".
-			for (DataPointWritable d : values) {
-				for (DataPointWritable k : values) {
+			ArrayList<DataPointWritable> list = new ArrayList<DataPointWritable>();
+			for (DataPointWritable e : values) {
+				DataPointWritable toAdd = new DataPointWritable();
+				toAdd.setid(e.getid());
+				toAdd.setValue(e.getValue());
+				list.add(toAdd);
+			}
+			
+			// Now do a double loop.
+			for (int i = 0; i < list.size(); ++i) {
+				DataPointWritable k = list.get(i);
+				for (int j = 0; j < list.size(); ++j) {
+					DataPointWritable d = list.get(j);
 					// Check if we're not along the diagonal.
-					if (k.geti() < d.geti()) { 
+					if (k.getid() < d.getid()) { 
 						double distance = evaluate(k, d);
-						context.write(new Text(String.format("%s:%s", k.geti(), k.getValue().toString())),
-								new Text(String.format("%s:%s:%s ", d.geti(), d.getValue().toString(), distance)));
-						context.write(new Text(String.format("%s:%s", d.geti(), d.getValue().toString())),
-								new Text(String.format("%s:%s:%s ", k.geti(), k.getValue().toString(), distance)));
+						// Output twice.
+						context.write(new Text(String.format("(%s, %s)", k.getid(), d.getid())), new Text("" + distance));
+						context.write(new Text(String.format("(%s, %s)", d.getid(), k.getid())), new Text("" + distance));
 					} // else do nothing, because it'd be redundant
 				}
 			}
@@ -152,7 +165,7 @@ public class PairwiseJob {
 			for (int i = 0; i < p1.length; ++i) {
 				sum += Math.pow(Double.parseDouble(p1[i]) - Double.parseDouble(p2[i]), 2);
 			}
-			return Math.exp(Math.sqrt(sum) / (2 * Math.pow(BlockReducer.SIGMA, 2)));
+			return Math.exp(Math.sqrt(sum) / (-2 * Math.pow(BlockReducer.SIGMA, 2)));
 		}
 	}
 
